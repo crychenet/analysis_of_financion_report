@@ -18,7 +18,7 @@ print(f'Сформировали итоговый отчет: {datetime.now()}')
 df_seasonal_analysis = seasonal_analysis.get_data_grouped_by_season(season_df=df_product_sales)
 print(f'Сформировали отчет по сезонам: {datetime.now()}')
 
-with pd.ExcelWriter('Финансовый отчет 16-22 октября.xlsx', engine='xlsxwriter') as writer:
+with pd.ExcelWriter('Финансовый отчет 16-22 октября_test.xlsx', engine='xlsxwriter') as writer:
     df_product_sales.to_excel(writer, sheet_name='Отчет по артикулам', index=False)
     df_seasonal_analysis.to_excel(writer, sheet_name='Отчет по сезонам')
     df_report.to_excel(writer, sheet_name='Итоговый отчет')
