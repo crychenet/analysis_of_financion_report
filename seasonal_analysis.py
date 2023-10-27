@@ -12,8 +12,9 @@ def get_data_grouped_by_season(season_df):
         data_grouped_by_season['Итоговая себестоимость'] + data_grouped_by_season['Штраф, руб'] +
         data_grouped_by_season['Логистика, руб'] + data_grouped_by_season['Итоговый размер кВВ']
     )
-    data_grouped_by_season['ЧП'] = data_grouped_by_season['ЧП'].replace([0], np.NaN)
-    data_grouped_by_season['Рентабельность'] = data_grouped_by_season['ЧП'] / data_grouped_by_season['Итоговая себестоимость']
+    # data_grouped_by_season['Рентабельность'] = np.where(
+    #     data_grouped_by_season['Себестоимость всех продаж'] != 0,
+    #     data_grouped_by_season['ЧП'] / data_grouped_by_season['Себестоимость всех продаж'], y=0)
     return data_grouped_by_season
 
 

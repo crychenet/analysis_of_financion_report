@@ -7,9 +7,15 @@ from datetime import datetime
 
 start_time = datetime.now()
 print(start_time)
-df = pd.read_excel("C:/Users/vyacheslav/Desktop/Работа/детализированный финансовый отчет 16-22 октября.xlsx")
+# df = pd.read_excel("C:/Users/vyacheslav/Desktop/Работа/детализированный финансовый отчет 16-22 октября.xlsx")
 df_cost_of_goods = pd.read_excel("C:/Users/vyacheslav/Desktop/Работа/2023.10.09 Отчет по скидкам_111023.xlsx",
                                  skiprows=2)
+df1 = pd.read_excel("C:/Users/vyacheslav/Desktop/1.xlsx")
+df2 = pd.read_excel("C:/Users/vyacheslav/Desktop/2.xlsx")
+df3 = pd.read_excel("C:/Users/vyacheslav/Desktop/3.xlsx")
+df4 = pd.read_excel("C:/Users/vyacheslav/Desktop/4.xlsx")
+df = pd.concat([df1, df2, df3, df4])
+
 
 df_product_sales = article_report_WB.get_article_report(df=df, df_cost_of_goods=df_cost_of_goods)
 print(f'Сформировали отчет по артикулам: {datetime.now()}')

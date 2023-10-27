@@ -47,13 +47,12 @@ def get_article_report(df, df_cost_of_goods):
         return commission_WB
 
     def get_logistic_costs(column):
-        commission_WB = np.sum(df[(df['Тип документа'] == 'Продажа') & (df['Обоснование для оплаты'] == 'Логистика') &
+        commission_WB = np.sum(df[(df['Обоснование для оплаты'] == 'Логистика') &
                                   (df['Артикул поставщика'] == column)]['Услуги по доставке товара покупателю'])
         return commission_WB
 
     def get_fine(column):
-        fine = np.sum(df[(df['Артикул поставщика'] == column) & (df['Обоснование для оплаты'] == 'Штрафы') &
-                      (df['Тип документа'] == 'Продажа')]['Общая сумма штрафов'])
+        fine = np.sum(df[(df['Артикул поставщика'] == column) & (df['Обоснование для оплаты'] == 'Штрафы')]['Общая сумма штрафов'])
         return fine
 
     def get_hyperlink(column):
