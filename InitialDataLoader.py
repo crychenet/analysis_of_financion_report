@@ -4,65 +4,115 @@ import pandas as pd
 import json
 import time
 import sys
-import os
 import logging
+import threading
+import queue
 from functools import wraps
 from collections import defaultdict
 
 
-logging.basicConfig(level=logging.INFO, stream=sys.stdout, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-
-
 class InitialWBDataLoader:
     def __init__(self, wb_statistic_and_price_token=None, wb_seller_analytics=None):
+        self.loger = logging.getLogger(self.__class__.__name__)
+        self.loger.setLevel(logging.DEBUG)
+
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+        stream_hunter = logging.StreamHandler(sys.stdout)
+        stream_hunter.setLevel(logging.DEBUG)
+        stream_hunter.setFormatter(formatter)
+        self.loger.addHandler(stream_hunter)
+
+        file_hunter = logging.FileHandler('Logbook')
+        file_hunter.setLevel(logging.DEBUG)
+        file_hunter.setFormatter(formatter)
+        self.loger.addHandler(file_hunter)
+
         self.wb_statistic_and_price_token = wb_statistic_and_price_token
         self.wb_seller_analytics = wb_seller_analytics
 
+    @staticmethod
+    def __handle_exceptions(max_attempts=5):
+        def decorator(func):
+            @wraps(func)
+            def wrapper(*args, **kwargs):
+                attempt = {'RequestException': 0, 'ValueError': 0, 'Exception': 0}
+                network_issues_attempts = 0
+                while max(attempt.values()) < max_attempts:
+                    try:
+                        response = func(*args, **kwargs)
+                        return response
+                    except (ConnectionError, requests.exceptions.Timeout):
+                        network_issues_attempts += 1
+                        if network_issues_attempts >= max_attempts:
+                            raise Exception("Превышено количество попыток из-за проблем с сетью. "
+                                            "Пожалуйста, проверьте ваше соединение.")
+                        args[0].loger.exception(f"Проблемы с сетью. Попытка {network_issues_attempts}"
+                                                f" из {max_attempts}.")
+                        print(1)
+                    except requests.RequestException as e:
+                        attempt['RequestException'] += 1
+                        print(2)
+                        args[0].loger.exception(f'Ошибка при выполнении запроса: {e}')
+                    except ValueError:
+                        attempt['ValueError'] += 1
+                        logging.exception("Неверный запрос, проверьте передаваемые данные.")
+                        print(3)
+                    except Exception as e:
+                        attempt['Exception'] += 1
+                        args[0].loger.exception(f'Неизвестная ошибка: {e}')
+                        print(4)
+                    if attempt != max_attempts:
+                        args[0].loger.info(
+                            f"time.sleep увеличен до {45 + 15 * max(attempt.values())}")
+                        time.sleep(60 + 15 * max(attempt.values()))
+                if max(attempt.values()) == max_attempts:
+                    raise Exception(f"Превышено максимальное количество попыток из-за ошибок {attempt}")
+            return wrapper
+        return decorator
+
+    @__handle_exceptions(max_attempts=3)
     def get_supplier_data(self, date_from):
         url = 'https://statistics-api.wildberries.ru/api/v1/supplier/incomes'
         headers = {'Authorization': self.wb_statistic_and_price_token}
         params = {'dateFrom': date_from}
         response = requests.get(url=url, headers=headers, params=params)
-        data = json.loads(response.text)
-        df = pd.DataFrame(data)
+        report = json.loads(response.text)
+        df = pd.DataFrame(report)
         return df
 
+    @__handle_exceptions(max_attempts=3)
     def get_stock_data(self, date_from):
         url = 'https://statistics-api.wildberries.ru/api/v1/supplier/stocks'
         headers = {'Authorization': self.wb_statistic_and_price_token}
         params = {'dateFrom': date_from}
         response = requests.get(url=url, headers=headers, params=params)
-        data = json.loads(response.text)
-        df = pd.DataFrame(data)
+        report = json.loads(response.text)
+        df = pd.DataFrame(report)
         return df
 
+    @__handle_exceptions(max_attempts=3)
     def get_orders_data(self, date_from):
         url = 'https://statistics-api.wildberries.ru/api/v1/supplier/orders'
         headers = {'Authorization': self.wb_statistic_and_price_token}
         params = {'dateFrom': date_from}
         response = requests.get(url=url, headers=headers, params=params)
-        data = json.loads(response.text)
-        df = pd.DataFrame(data)
+        report = json.loads(response.text)
+        df = pd.DataFrame(report)
         return df
 
-    def get_sales_data(self, dateFrom):
+    @__handle_exceptions(max_attempts=3)
+    def get_sales_data(self, date_from):
         url = 'https://statistics-api.wildberries.ru/api/v1/supplier/sales'
         headers = {'Authorization': self.wb_statistic_and_price_token}
-        params = {'dateFrom': dateFrom}
+        params = {'dateFrom': date_from}
         response = requests.get(url=url, headers=headers, params=params)
-        data = json.loads(response.text)
-        df = pd.DataFrame(data)
+        report = json.loads(response.text)
+        df = pd.DataFrame(report)
         return df
 
+    @__handle_exceptions(max_attempts=3)
     def get_detail_by_period_data(self, date_from, date_to, limit, rrdid):
-        # def join_dict(first_dict, second_dict):
-        #     joined_dict = {}
-        #     for i in set(first_dict.keys() | second_dict.keys()):
-        #         joined_dict[i] = first_dict[i] + second_dict[i] if i in first_dict.keys() & second_dict.keys() \
-        #             else first_dict[i] if i in first_dict.keys() else second_dict[i]
-        #     return joined_dict
-
-        # Доделать как заработает сервер (СМОТРИ НА URL APZ:\Ожогина\Bairuilun Snow Boots.xlsxI)
         df = pd.DataFrame()
         number_request = 1
         while True:
@@ -75,8 +125,8 @@ class InitialWBDataLoader:
                 'rrdid': rrdid
             }
             response = requests.get(url=url, headers=headers, params=params)
-            data = json.loads(response.text)
-            df = pd.concat([df, pd.DataFrame(data)])
+            report = json.loads(response.text)
+            df = pd.concat([df, pd.DataFrame(report)])
             if df.shape[0] < 100000 * number_request:
                 break
             else:
@@ -84,41 +134,6 @@ class InitialWBDataLoader:
             number_request += 1
             time.sleep(60)
         return df
-
-    @staticmethod
-    def __handle_exceptions(max_attempts=5):
-        def decorator(func):
-            @wraps(func)
-            def wrapper(*args, **kwargs):
-                attempt = {'RequestException': 0, 'ValueError': 0, 'Exception': 0}
-                network_issues_attempts = 0
-                while max(attempt.values()) < max_attempts:
-                    try:
-                        return func(*args, **kwargs)
-                    except (ConnectionError, requests.exceptions.Timeout):
-                        network_issues_attempts += 1
-                        if network_issues_attempts >= max_attempts:
-                            raise Exception("Превышено количество попыток из-за проблем с сетью. "
-                                            "Пожалуйста, проверьте ваше соединение.")
-                        logging.error(f"Проблемы с сетью. Попытка {network_issues_attempts} из {max_attempts}.")
-                        time.sleep(60)
-                    except requests.RequestException as e:
-                        attempt['RequestException'] += 1
-                        logging.error(f'Ошибка при выполнении запроса: {e}')
-                    except ValueError:
-                        attempt['ValueError'] += 1
-                        logging.error("Неверный запрос, проверьте передаваемые данные.")
-                    except Exception as e:
-                        attempt['Exception'] += 1
-                        logging.error(f'Неизвестная ошибка: {e}')
-                    if attempt != max_attempts:
-                        logging.error(
-                            f"Слишком много запросов. time.sleep увеличен до {60 + 15 * max(attempt.values())}")
-                        time.sleep(60 + 15 * max(attempt.values()))
-                if max(attempt.values()) == max_attempts:
-                    raise Exception(f"Превышено максимальное количество попыток из-за ошибок {attempt}")
-            return wrapper
-        return decorator
 
     @__handle_exceptions(max_attempts=5)
     def __create_report_paid_storage(self, remainder, diviser, date_from, date_to):
@@ -137,7 +152,7 @@ class InitialWBDataLoader:
             }
         }
         response = requests.post(url=url, headers=headers, json=json_data)
-        if response.status_code == 201:
+        if response.ok:
             return response.text
         else:
             response.raise_for_status()
@@ -184,11 +199,10 @@ class InitialWBDataLoader:
             json=json_data
         )
         if response.status_code == 200:
-            data = json.loads(response.text)
-            # df = pd.DataFrame(data)
-            return data
+            report = json.loads(response.text)
+            return report
         else:
-            raise response.raise_for_status()
+            response.raise_for_status()
 
     @staticmethod
     def __set_download_package_information(date_from_str, date_to_str):
@@ -211,7 +225,6 @@ class InitialWBDataLoader:
                     current_date = next_date_1_day
             else:
                 days_diff_list.append((date_to - current_date).days)
-                # dates_list.append(current_date)
                 dates_list.append(date_to)
                 break
         if dates_list[-1] != date_to:
@@ -221,48 +234,66 @@ class InitialWBDataLoader:
         days_diff_list = [diff - 1 if diff > 2 else diff if diff != 0 else 1 for diff in days_diff_list]
         return {'download_package_counts': days_diff_list, 'download_time_points': dates_list}
 
-    def get_report_paid_storage(self, date_from, date_to):
-        def aggregate_join_data(list_reports: list):
-            sorted_data = [{'date': d['date'], 'nmId': d['nmId'], 'warehousePrice': d['warehousePrice']}
-                           for d in list_reports]
-            aggregate_data = defaultdict(int)
-            for element in sorted_data:
-                date_element, id_element, price_element = element.values()
-                aggregate_data[(date_element, id_element)] += price_element
-            aggregate_data = dict(aggregate_data)
-            aggregate_data = [(k[0], k[1], v) for k, v in aggregate_data.items()]
-            return aggregate_data
+    def get_report_paid_storage(self, date_from: str, date_to: str):
+        def aggregate_join_data(join_report):
+            while True:
+                report = data_queue.get()
+                if report is None:
+                    break
+                sorted_data = [{'date': d['date'], 'nmId': d['nmId'], 'warehousePrice': d['warehousePrice']}
+                               for d in report]
+                aggregate_data = defaultdict(int)
+                for element in sorted_data:
+                    date_element, id_element, price_element = element.values()
+                    aggregate_data[(date_element, id_element)] += price_element
+                aggregate_data = dict(aggregate_data)
+                aggregate_data = [(k[0], k[1], v) for k, v in aggregate_data.items()]
+                join_report += aggregate_data
+            return join_report
 
-        download_package_counts, download_time_points = self.__set_download_package_information(date_from,
-                                                                                                date_to).values()
-        counter_of_downloaded_report_parts = 0
-        dict_df_weekly = []
-        while counter_of_downloaded_report_parts < len(download_package_counts):
-            reports = []
-            diviser = download_package_counts[counter_of_downloaded_report_parts]
-            remainder = 0
-            date_from = download_time_points[counter_of_downloaded_report_parts * 2]
-            date_to = download_time_points[counter_of_downloaded_report_parts * 2 + 1]
-            while remainder < diviser:
-                logging.info(f'Отчет разделен на: {diviser} частей. Часть отчета {remainder + 1}')
-                tasks_id = self.__create_report_paid_storage(remainder=remainder, diviser=diviser,
-                                                             date_from=date_from, date_to=date_to)
-                time.sleep(10)
-                tasks = self.__check_status_create_paid_storage(tasks_id=tasks_id)
-                if tasks == 'increase_diviser':
-                    diviser += 1
-                    logging.info(f'Разделение отчета увеличено. Сейчас {diviser} части')
-                    continue
-                # time.sleep(10)
-                new_report = self.__load_paid_storage(tasks=tasks)
-                # time.sleep(10)
-                reports += new_report
-                remainder += 1
-                # reports = aggregate_join_data(first_data=new_report, second_data=reports)
-            logging.info(f'Недельный отчет за хранение {date_from} - {date_to} сохранен')
-            counter_of_downloaded_report_parts += 1
-            dict_df_weekly += aggregate_join_data(reports)
-        df_reports = pd.DataFrame(dict_df_weekly, columns=['Дата', 'Артикул WB', 'Хранение, руб'])
+        def load_data(download_package_counts: list, download_time_points: list):
+            counter_of_downloaded_report_parts = 0
+            while counter_of_downloaded_report_parts < len(download_package_counts):
+                reports = []
+                diviser = download_package_counts[counter_of_downloaded_report_parts]
+                remainder = 0
+                dateFrom = download_time_points[counter_of_downloaded_report_parts * 2]
+                dateTo = download_time_points[counter_of_downloaded_report_parts * 2 + 1]
+                while remainder < diviser:
+                    self.loger.info(f'Отчет разделен на: {diviser} частей. Часть отчета {remainder + 1}')
+                    tasks_id = self.__create_report_paid_storage(remainder=remainder, diviser=diviser,
+                                                                 date_from=dateFrom, date_to=dateTo)
+                    # time.sleep(20)
+                    tasks = self.__check_status_create_paid_storage(tasks_id=tasks_id)
+                    if tasks == 'increase_diviser':
+                        diviser += 1
+                        remainder = 0
+                        self.loger.info(f'Разделение отчета увеличено. Сейчас {diviser} части')
+                        continue
+                    # time.sleep(3)
+                    new_report = self.__load_paid_storage(tasks=tasks)
+                    # time.sleep(3)
+                    reports += new_report
+                    remainder += 1
+                self.loger.info(f'Недельный отчет за хранение {date_from} - {date_to} загружен')
+                counter_of_downloaded_report_parts += 1
+                data_queue.put(reports)
+            data_queue.put(None)
+
+        data_queue = queue.SimpleQueue()
+        package_download_counts, time_points = self.__set_download_package_information(
+            date_from, date_to).values()
+        join_report = []
+        loader_thread = threading.Thread(target=load_data, args=(package_download_counts, time_points))
+        aggregator_thread = threading.Thread(target=aggregate_join_data, args=(join_report, ))
+
+        loader_thread.start()
+        aggregator_thread.start()
+
+        loader_thread.join()
+        aggregator_thread.join()
+        df_reports = pd.DataFrame(join_report, columns=['Дата', 'Артикул WB', 'Хранение, руб'])
+        logging.info(f'Отчет за хранение c {date_from} по {date_to} загружен')
         return df_reports
 
     def get_price(self, quantity: int):
@@ -270,11 +301,11 @@ class InitialWBDataLoader:
         headers = {'Authorization': self.wb_statistic_and_price_token}
         params = {'quantity': quantity}
         response = requests.get(url=url, headers=headers, params=params)
-        data = json.loads(response.text)
-        df = pd.DataFrame(data)
+        report = json.loads(response.text)
+        df = pd.DataFrame(report)
         return df
 
-    def select_wb_report(self, source, date_from=None, date_to=None, limit=None, rrdid=None,
+    def select_wb_report(self, source, date_from=None, date_to=None, limit=100000, rrdid=None,
                          quantity=None):
         if source == 'suppliers':
             return self.get_supplier_data(date_from)
@@ -340,7 +371,7 @@ t = json.loads(key)['wb_key']
 
 loader = InitialDataLoader(wb_statistic_and_price_token=t)
 
-data = loader.select_data_source('wb', source='paidStorage', date_from='2024-01-22', date_to='2024-01-28')
+data = loader.select_data_source('wb', source='paidStorage', date_from='2023-12-22', date_to='2024-01-28')
 data.to_excel('data.xlsx', index=False)
 # data = data.T
 # data.to_excel('Хранение.xlsx', index=False)
