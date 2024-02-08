@@ -7,6 +7,7 @@ import sys
 import os
 import logging
 from functools import wraps
+from collections import defaultdict
 
 
 logging.basicConfig(level=logging.INFO, stream=sys.stdout, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -221,12 +222,16 @@ class InitialWBDataLoader:
         return {'download_package_counts': days_diff_list, 'download_time_points': dates_list}
 
     def get_report_paid_storage(self, date_from, date_to):
-        def join_data(first_data, second_data):
-            joined_dict = {}
-            # for i in set(first_data.keys() | second_data.keys()):
-            #     joined_dict[i] = first_data[i] + second_data[i] if i in first_data.keys() & second_data.keys() \
-            #         else first_data[i] if i in first_data.keys() else second_data[i]
-            # return joined_dict
+        def aggregate_join_data(list_reports: list):
+            sorted_data = [{'date': d['date'], 'nmId': d['nmId'], 'warehousePrice': d['warehousePrice']}
+                           for d in list_reports]
+            aggregate_data = defaultdict(int)
+            for element in sorted_data:
+                date_element, id_element, price_element = element.values()
+                aggregate_data[(date_element, id_element)] += price_element
+            aggregate_data = dict(aggregate_data)
+            aggregate_data = [(k[0], k[1], v) for k, v in aggregate_data.items()]
+            return aggregate_data
 
         download_package_counts, download_time_points = self.__set_download_package_information(date_from,
                                                                                                 date_to).values()
@@ -250,22 +255,14 @@ class InitialWBDataLoader:
                     continue
                 # time.sleep(10)
                 new_report = self.__load_paid_storage(tasks=tasks)
-                with open('data.txt', 'w') as file:
-                    file.write(str(new_report))
-                    file.write(f'\nType - {type(new_report)}')
                 # time.sleep(10)
-                sys.exit()
+                reports += new_report
                 remainder += 1
-                # reports = join_dict(reports, new_report)
-                # reports.append(pd.DataFrame(new_report))
-            df_weekly = pd.concat(reports)
-            # df_weekly = df_weekly.T
-            df_weekly.to_excel(f'Недельный отчет за хранение {date_from} - {date_to}.xlsx', index=False)
+                # reports = aggregate_join_data(first_data=new_report, second_data=reports)
             logging.info(f'Недельный отчет за хранение {date_from} - {date_to} сохранен')
             counter_of_downloaded_report_parts += 1
-            # dict_df_weekly = join_dict(dict_df_weekly, reports)
-            dict_df_weekly.append(df_weekly)
-        df_reports = pd.concat(dict_df_weekly)
+            dict_df_weekly += aggregate_join_data(reports)
+        df_reports = pd.DataFrame(dict_df_weekly, columns=['Дата', 'Артикул WB', 'Хранение, руб'])
         return df_reports
 
     def get_price(self, quantity: int):
@@ -343,6 +340,7 @@ t = json.loads(key)['wb_key']
 
 loader = InitialDataLoader(wb_statistic_and_price_token=t)
 
-data = loader.select_data_source('wb', source='paidStorage', date_from='2023-11-10', date_to='2023-12-31')
+data = loader.select_data_source('wb', source='paidStorage', date_from='2024-01-22', date_to='2024-01-28')
+data.to_excel('data.xlsx', index=False)
 # data = data.T
 # data.to_excel('Хранение.xlsx', index=False)
