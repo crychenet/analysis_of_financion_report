@@ -121,3 +121,5 @@ def get_article_report(df, df_cost_of_goods):
     article_report = article_report.iloc[:, [0, 1, 3, 11, 2, 4, 6, 5, 7, 8, 9, 10, 12, 13, 14, 15, 16,
                                              17, 18, 19, 20, 21]]
     return article_report
+
+

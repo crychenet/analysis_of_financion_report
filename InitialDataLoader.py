@@ -13,30 +13,30 @@ from collections import defaultdict
 
 class InitialWBDataLoader:
     def __init__(self, wb_statistic_and_price_token=None, wb_seller_analytics=None):
-        self.loger = logging.getLogger(self.__class__.__name__)
-        self.loger.setLevel(logging.DEBUG)
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger.setLevel(logging.DEBUG)
 
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
         stream_hunter = logging.StreamHandler(sys.stdout)
         stream_hunter.setLevel(logging.DEBUG)
         stream_hunter.setFormatter(formatter)
-        self.loger.addHandler(stream_hunter)
+        self.logger.addHandler(stream_hunter)
 
         file_hunter = logging.FileHandler('Logbook')
         file_hunter.setLevel(logging.DEBUG)
         file_hunter.setFormatter(formatter)
-        self.loger.addHandler(file_hunter)
+        self.logger.addHandler(file_hunter)
 
         self.wb_statistic_and_price_token = wb_statistic_and_price_token
         self.wb_seller_analytics = wb_seller_analytics
 
     @staticmethod
-    def __handle_exceptions(max_attempts=5):
+    def _handle_exceptions(max_attempts=5):
         def decorator(func):
             @wraps(func)
             def wrapper(*args, **kwargs):
-                attempt = {'RequestException': 0, 'ValueError': 0, 'Exception': 0}
+                attempt = {'RequestException': 0, 'ValueError': 0, 'Other exception': 0}
                 network_issues_attempts = 0
                 while max(attempt.values()) < max_attempts:
                     try:
@@ -47,23 +47,19 @@ class InitialWBDataLoader:
                         if network_issues_attempts >= max_attempts:
                             raise Exception("Превышено количество попыток из-за проблем с сетью. "
                                             "Пожалуйста, проверьте ваше соединение.")
-                        args[0].loger.exception(f"Проблемы с сетью. Попытка {network_issues_attempts}"
-                                                f" из {max_attempts}.")
-                        print(1)
+                        args[0].logger.exception(f"Проблемы с сетью. Попытка {network_issues_attempts}"
+                                                 f" из {max_attempts}.")
                     except requests.RequestException as e:
                         attempt['RequestException'] += 1
-                        print(2)
-                        args[0].loger.exception(f'Ошибка при выполнении запроса: {e}')
+                        args[0].logger.exception(f'Ошибка при выполнении запроса: {e}')
                     except ValueError:
                         attempt['ValueError'] += 1
                         logging.exception("Неверный запрос, проверьте передаваемые данные.")
-                        print(3)
                     except Exception as e:
-                        attempt['Exception'] += 1
-                        args[0].loger.exception(f'Неизвестная ошибка: {e}')
-                        print(4)
+                        attempt['Other exception'] += 1
+                        args[0].logger.exception(f'Неизвестная ошибка: {e}')
                     if attempt != max_attempts:
-                        args[0].loger.info(
+                        args[0].logger.info(
                             f"time.sleep увеличен до {45 + 15 * max(attempt.values())}")
                         time.sleep(60 + 15 * max(attempt.values()))
                 if max(attempt.values()) == max_attempts:
@@ -71,71 +67,94 @@ class InitialWBDataLoader:
             return wrapper
         return decorator
 
-    @__handle_exceptions(max_attempts=3)
+    @_handle_exceptions(max_attempts=3)
     def get_supplier_data(self, date_from):
         url = 'https://statistics-api.wildberries.ru/api/v1/supplier/incomes'
         headers = {'Authorization': self.wb_statistic_and_price_token}
         params = {'dateFrom': date_from}
         response = requests.get(url=url, headers=headers, params=params)
-        report = json.loads(response.text)
-        df = pd.DataFrame(report)
-        return df
+        if response.ok:
+            report = json.loads(response.text)
+            df = pd.DataFrame(report)
+            return df
+        else:
+            response.raise_for_status()
 
-    @__handle_exceptions(max_attempts=3)
+    @_handle_exceptions(max_attempts=3)
     def get_stock_data(self, date_from):
         url = 'https://statistics-api.wildberries.ru/api/v1/supplier/stocks'
         headers = {'Authorization': self.wb_statistic_and_price_token}
         params = {'dateFrom': date_from}
         response = requests.get(url=url, headers=headers, params=params)
-        report = json.loads(response.text)
-        df = pd.DataFrame(report)
-        return df
+        if response.ok:
+            report = json.loads(response.text)
+            df = pd.DataFrame(report)
+            return df
+        else:
+            response.raise_for_status()
 
-    @__handle_exceptions(max_attempts=3)
+    @_handle_exceptions(max_attempts=3)
     def get_orders_data(self, date_from):
         url = 'https://statistics-api.wildberries.ru/api/v1/supplier/orders'
         headers = {'Authorization': self.wb_statistic_and_price_token}
         params = {'dateFrom': date_from}
         response = requests.get(url=url, headers=headers, params=params)
-        report = json.loads(response.text)
-        df = pd.DataFrame(report)
-        return df
+        if response.status_code.ok:
+            report = json.loads(response.text)
+            df = pd.DataFrame(report)
+            return df
+        else:
+            response.raise_for_status()
 
-    @__handle_exceptions(max_attempts=3)
+    @_handle_exceptions(max_attempts=3)
     def get_sales_data(self, date_from):
         url = 'https://statistics-api.wildberries.ru/api/v1/supplier/sales'
         headers = {'Authorization': self.wb_statistic_and_price_token}
         params = {'dateFrom': date_from}
         response = requests.get(url=url, headers=headers, params=params)
-        report = json.loads(response.text)
-        df = pd.DataFrame(report)
-        return df
-
-    @__handle_exceptions(max_attempts=3)
-    def get_detail_by_period_data(self, date_from, date_to, limit, rrdid):
-        df = pd.DataFrame()
-        number_request = 1
-        while True:
-            url = 'https://statistics-api.wildberries.ru/api/v1/supplier/reportDetailByPeriod'
-            headers = {'Authorization': self.wb_statistic_and_price_token}
-            params = {
-                'dateFrom': date_from,
-                'limit': limit,
-                'dateTo': date_to,
-                'rrdid': rrdid
-            }
-            response = requests.get(url=url, headers=headers, params=params)
+        if response.ok:
             report = json.loads(response.text)
-            df = pd.concat([df, pd.DataFrame(report)])
-            if df.shape[0] < 100000 * number_request:
+            df = pd.DataFrame(report)
+            return df
+        else:
+            response.raise_for_status()
+
+    @_handle_exceptions(max_attempts=3)
+    def __load_detail_by_period_data(self, date_from, date_to, limit, rrdid):
+        url = 'https://statistics-api.wildberries.ru/api/v1/supplier/reportDetailByPeriod'
+        headers = {'Authorization': self.wb_statistic_and_price_token}
+        params = {
+            'dateFrom': date_from,
+            'limit': limit,
+            'dateTo': date_to,
+            'rrdid': rrdid
+        }
+        response = requests.get(url=url, headers=headers, params=params)
+        if response.ok:
+            report = json.loads(response.text)
+            return report
+        else:
+            response.raise_for_status()
+
+    def get_detail_by_period_data(self, date_from, date_to, limit, rrdid):
+        if limit is None:
+            limit = 100000
+        if rrdid is None:
+            rrdid = 0
+        reports = []
+        path_report = 0
+        while True:
+            new_report = self.__load_detail_by_period_data(date_from, date_to, limit, rrdid)
+            reports += new_report
+            # self.logger.info(f'Отчет разделен на: {diviser} частей. Часть отчета {remainder + 1}')
+            if len(new_report) < 100000:
                 break
             else:
-                rrdid = df['rrd_id'].iloc[-1]
-            number_request += 1
-            time.sleep(60)
+                rrdid = new_report[-1]['rrd_id']
+        df = pd.DataFrame(reports)
         return df
 
-    @__handle_exceptions(max_attempts=5)
+    @_handle_exceptions(max_attempts=5)
     def __create_report_paid_storage(self, remainder, diviser, date_from, date_to):
         url = 'https://statistics-api.wildberries.ru/api/v1/delayed-gen/tasks/create'
         headers = {
@@ -157,7 +176,7 @@ class InitialWBDataLoader:
         else:
             response.raise_for_status()
 
-    @__handle_exceptions(max_attempts=5)
+    @_handle_exceptions(max_attempts=5)
     def __check_status_create_paid_storage(self, tasks_id):
         tasks_id = json.loads(tasks_id)
         url = 'https://statistics-api.wildberries.ru/api/v1/delayed-gen/tasks'
@@ -182,7 +201,7 @@ class InitialWBDataLoader:
         else:
             response.raise_for_status()
 
-    @__handle_exceptions(max_attempts=5)
+    @_handle_exceptions(max_attempts=5)
     def __load_paid_storage(self, tasks):
         tasks = json.loads(tasks)
         url = 'https://statistics-api.wildberries.ru/api/v1/delayed-gen/tasks/download'
@@ -260,29 +279,28 @@ class InitialWBDataLoader:
                 dateFrom = download_time_points[counter_of_downloaded_report_parts * 2]
                 dateTo = download_time_points[counter_of_downloaded_report_parts * 2 + 1]
                 while remainder < diviser:
-                    self.loger.info(f'Отчет разделен на: {diviser} частей. Часть отчета {remainder + 1}')
+                    self.logger.info(f'Отчет разделен на: {diviser} частей. Часть отчета {remainder + 1}')
                     tasks_id = self.__create_report_paid_storage(remainder=remainder, diviser=diviser,
                                                                  date_from=dateFrom, date_to=dateTo)
-                    # time.sleep(20)
+                    time.sleep(20)
                     tasks = self.__check_status_create_paid_storage(tasks_id=tasks_id)
                     if tasks == 'increase_diviser':
                         diviser += 1
                         remainder = 0
-                        self.loger.info(f'Разделение отчета увеличено. Сейчас {diviser} части')
+                        self.logger.info(f'Разделение отчета увеличено. Сейчас {diviser} части')
                         continue
-                    # time.sleep(3)
+                    time.sleep(3)
                     new_report = self.__load_paid_storage(tasks=tasks)
-                    # time.sleep(3)
+                    time.sleep(3)
                     reports += new_report
                     remainder += 1
-                self.loger.info(f'Недельный отчет за хранение {date_from} - {date_to} загружен')
+                self.logger.info(f'Недельный отчет за хранение {date_from} - {date_to} загружен')
                 counter_of_downloaded_report_parts += 1
                 data_queue.put(reports)
             data_queue.put(None)
 
         data_queue = queue.SimpleQueue()
-        package_download_counts, time_points = self.__set_download_package_information(
-            date_from, date_to).values()
+        package_download_counts, time_points = self.__set_download_package_information(date_from, date_to).values()
         join_report = []
         loader_thread = threading.Thread(target=load_data, args=(package_download_counts, time_points))
         aggregator_thread = threading.Thread(target=aggregate_join_data, args=(join_report, ))
@@ -305,7 +323,7 @@ class InitialWBDataLoader:
         df = pd.DataFrame(report)
         return df
 
-    def select_wb_report(self, source, date_from=None, date_to=None, limit=100000, rrdid=None,
+    def select_wb_report(self, source, date_from=None, date_to=None, limit=None, rrdid=None,
                          quantity=None):
         if source == 'suppliers':
             return self.get_supplier_data(date_from)
@@ -314,16 +332,9 @@ class InitialWBDataLoader:
         elif source == 'orders':
             return self.get_orders_data(date_from)
         elif source == 'sales':
-            d_from = date_from if date_from is not None else 100000
-            return self.get_sales_data(d_from)
+            return self.get_sales_data(date_from)
         elif source == 'detailByPeriod':
-            # Код ниже вероятно не нужен
-            if (date_from or date_to) is not None:
-                lim = limit if limit is not None else 100000
-                rd = rrdid if rrdid is not None else 0
-                return self.get_detail_by_period_data(date_from, date_to, lim, rd)
-            else:
-                raise ValueError(f'Проверьте параметры date_from: {date_from}, date_to: {date_to}')
+            return self.get_detail_by_period_data(date_from, date_to, limit, rrdid)
         elif source == 'paidStorage':
             return self.get_report_paid_storage(date_from, date_to)
         elif source == 'priceInfo':
@@ -371,7 +382,7 @@ t = json.loads(key)['wb_key']
 
 loader = InitialDataLoader(wb_statistic_and_price_token=t)
 
-data = loader.select_data_source('wb', source='paidStorage', date_from='2023-12-22', date_to='2024-01-28')
+data = loader.select_data_source('wb', source='paidStorage', date_from='2023-12-10', date_to='2023-12-11')
 data.to_excel('data.xlsx', index=False)
 # data = data.T
 # data.to_excel('Хранение.xlsx', index=False)

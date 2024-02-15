@@ -4,10 +4,13 @@ import numpy as np
 from copy import deepcopy
 from datetime import datetime
 
+
 print(datetime.now())
-df_ = pd.read_excel("C:/Users/vyacheslav/Downloads/Финансовый_отчет_по_OZON_1_15_октября.xlsx")
-df_cost_of_goods_ = pd.read_excel("C:/Users/vyacheslav/Desktop/Работа/2023.10.09 Отчет по скидкам_111023.xlsx",
-                                  skiprows=2)
+df_ = pd.read_excel(r"C:\Users\vyacheslav\Downloads\Отчет по товарам за период 2023-09-01 - 2023-12-01 (1).xlsx")
+# df_cost_of_goods_ = pd.read_excel("C:/Users/vyacheslav/Desktop/Работа/2023.10.09 Отчет по скидкам_111023.xlsx",
+#                                   skiprows=2)
+df_cost_of_goods_ = pd.read_excel("C:/Users/vyacheslav/Desktop/2023.10.31 Отчет по скидкам_021123.xlsx",
+                                  skiprows=1)
 
 
 def get_article_report(df, df_cost_of_goods):
@@ -87,8 +90,8 @@ def get_article_report(df, df_cost_of_goods):
     article_report['Итоговая себестоимость'] = article_report['Настоящий СЕБЕК'] * (article_report['Кол-во продаж'] -
                                                                                     article_report['Кол-во возвратов'])
 
-    article_report['Скидка от РРЦ'] = (article_report['За продажу или возврат до вычета комиссий и услуг'] / \
-                                       article_report['Выручка в РРЦ'])
+    article_report['Скидка от РРЦ'] = 1 - (article_report['За продажу или возврат до вычета комиссий и услуг'] /
+                                           article_report['Выручка в РРЦ'])
 
     article_report['Прибыль'] = (article_report['За продажу или возврат до вычета комиссий и услуг'] -
                                  article_report['Итоговая себестоимость'] +
@@ -169,7 +172,7 @@ df_report = get_report(initial_df=df_, article_df=df_article_report)
 print(f'Сформировали итоговый отчет: {datetime.now()}')
 
 
-with pd.ExcelWriter('OZON 1-15 октября.xlsx', engine='xlsxwriter') as writer:
+with pd.ExcelWriter('OZON Финансовый отчет 1 сентября - 1 декабря.xlsx', engine='xlsxwriter') as writer:
     df_article_report.to_excel(writer, sheet_name='Отчет по артикулам', index=False)
     df_seasonal_analysis.to_excel(writer, sheet_name='Отчет по сезонам')
     df_report.to_excel(writer, sheet_name='Итоговый отчет')
