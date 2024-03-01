@@ -9,6 +9,12 @@ import threading
 import queue
 from functools import wraps
 from collections import defaultdict
+import googleapiclient
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+from google.auth.transport.requests import Request
+from google_auth_oauthlib.flow import InstalledAppFlow
 
 
 class InitialWBDataLoader:
@@ -23,7 +29,7 @@ class InitialWBDataLoader:
         stream_hunter.setFormatter(formatter)
         self.logger.addHandler(stream_hunter)
 
-        file_hunter = logging.FileHandler('Logbook')
+        file_hunter = logging.FileHandler('Logbook.txt')
         file_hunter.setLevel(logging.DEBUG)
         file_hunter.setFormatter(formatter)
         self.logger.addHandler(file_hunter)
@@ -64,7 +70,9 @@ class InitialWBDataLoader:
                         time.sleep(60 + 15 * max(attempt.values()))
                 if max(attempt.values()) == max_attempts:
                     raise Exception(f"Превышено максимальное количество попыток из-за ошибок {attempt}")
+
             return wrapper
+
         return decorator
 
     @_handle_exceptions(max_attempts=3)
@@ -99,7 +107,7 @@ class InitialWBDataLoader:
         headers = {'Authorization': self.wb_statistic_and_price_token}
         params = {'dateFrom': date_from}
         response = requests.get(url=url, headers=headers, params=params)
-        if response.status_code.ok:
+        if response.ok:
             report = json.loads(response.text)
             df = pd.DataFrame(report)
             return df
@@ -146,11 +154,12 @@ class InitialWBDataLoader:
         while True:
             new_report = self.__load_detail_by_period_data(date_from, date_to, limit, rrdid)
             reports += new_report
-            # self.logger.info(f'Отчет разделен на: {diviser} частей. Часть отчета {remainder + 1}')
             if len(new_report) < 100000:
                 break
             else:
                 rrdid = new_report[-1]['rrd_id']
+            self.logger.info(f'Часть отчета {path_report + 1}')
+            path_report += 1
         df = pd.DataFrame(reports)
         return df
 
@@ -231,24 +240,18 @@ class InitialWBDataLoader:
         current_date = date_from
         dates_list = [date_from]
         days_diff_list = []
-
         while current_date <= date_to:
-            next_date_7_days = current_date + datetime.timedelta(days=7)
-            if next_date_7_days <= date_to:
-                days_diff_list.append((next_date_7_days - current_date).days)
-                dates_list.append(next_date_7_days)
-                current_date = next_date_7_days
-                next_date_1_day = current_date + datetime.timedelta(days=1)
-                if next_date_1_day <= date_to:
-                    dates_list.append(next_date_1_day)
-                    current_date = next_date_1_day
+            test_data = current_date + datetime.timedelta(days=8)
+            if test_data <= date_to:
+                current_date += datetime.timedelta(days=7)
+                days_diff_list.append(7)
+                dates_list.append(current_date)
+                current_date += datetime.timedelta(days=1)
+                dates_list.append(current_date)
             else:
-                days_diff_list.append((date_to - current_date).days)
                 dates_list.append(date_to)
+                days_diff_list.append((date_to - current_date).days)
                 break
-        if dates_list[-1] != date_to:
-            days_diff_list.append((date_to - dates_list[-1]).days)
-            dates_list.append(date_to)
         dates_list = [str(day.date()) for day in dates_list]
         days_diff_list = [diff - 1 if diff > 2 else diff if diff != 0 else 1 for diff in days_diff_list]
         return {'download_package_counts': days_diff_list, 'download_time_points': dates_list}
@@ -294,7 +297,7 @@ class InitialWBDataLoader:
                     time.sleep(3)
                     reports += new_report
                     remainder += 1
-                self.logger.info(f'Недельный отчет за хранение {date_from} - {date_to} загружен')
+                self.logger.info(f'Недельный отчет за хранение {dateFrom} - {dateTo} загружен')
                 counter_of_downloaded_report_parts += 1
                 data_queue.put(reports)
             data_queue.put(None)
@@ -303,7 +306,7 @@ class InitialWBDataLoader:
         package_download_counts, time_points = self.__set_download_package_information(date_from, date_to).values()
         join_report = []
         loader_thread = threading.Thread(target=load_data, args=(package_download_counts, time_points))
-        aggregator_thread = threading.Thread(target=aggregate_join_data, args=(join_report, ))
+        aggregator_thread = threading.Thread(target=aggregate_join_data, args=(join_report,))
 
         loader_thread.start()
         aggregator_thread.start()
@@ -349,28 +352,143 @@ class InitialOZONDataLoader:
 
     def select_ozon_report(self):
         pass
+
     pass
 
 
 class InitialOurDataLoader:
-    def select_our_report(self):
-        pass
-    pass
+    def __init__(self, configurator_downloading_our_reports, data_source_folder_id='10ZDgPLizSw-M7hZm3QkE7oTe-HKRNRdU'):
+        self.scope = ["https://www.googleapis.com/auth/drive.metadata.readonly",
+                      "https://www.googleapis.com/auth/spreadsheets.readonly"]
+        self.data_source_folder_id = data_source_folder_id
+        self.configurator_downloading_our_reports = configurator_downloading_our_reports
+        with open(self.configurator_downloading_our_reports, 'r') as config_file:
+            content = config_file.read()
+            self.config = json.loads(content)
+
+    @staticmethod
+    def _handle_exceptions(max_attempts=1):
+        def decorator(func):
+            @wraps(func)
+            def wrapper(*args, **kwargs):
+                attempts = 0
+                try:
+                    return func(*args, **kwargs)
+                except googleapiclient.errors.HttpError as err:
+                    attempts += 1
+                    print(f'Ошибка {err}')
+                if attempts == max_attempts:
+                    raise Exception('Много ошибочек')
+            return wrapper
+        return decorator
+
+    @_handle_exceptions()
+    def authenticate_in_google_services(self):
+        creds = None
+        if 'token' in self.config.keys():
+            creds = self.config["token"]
+            creds = Credentials.from_authorized_user_info(creds)
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                flow = InstalledAppFlow.from_client_config(self.config["credentials"], self.scope)
+                creds = flow.run_local_server(port=0)
+            self.config['token'] = json.loads(creds.to_json())
+            with open("configuratorDownloadOurReports.json", "w") as conf_file:
+                json.dump(self.config, conf_file)
+
+    @_handle_exceptions()
+    def get_list_our_report(self):
+        creds = Credentials.from_authorized_user_info(self.config['token'], self.scope)
+        service = build("drive", "v3", credentials=creds)
+        results = service.files().list(
+            q=f"'{self.data_source_folder_id}' in parents",
+            fields="nextPageToken, files(id, name)"
+        ).execute()
+        items = results.get("files", [])
+        return items
+
+    @_handle_exceptions()
+    def download_report(self, sample_spreadsheet_id, sample_range_name=None):
+        if sample_range_name is None:
+            sample_range_name = "TDSheet!A1:AAA"
+        creds = Credentials.from_authorized_user_info(self.config['token'], self.scope)
+        service = build("sheets", "v4", credentials=creds)
+
+        sheet = service.spreadsheets()
+        result = (
+            sheet.values()
+            .get(spreadsheetId=sample_spreadsheet_id, range=sample_range_name)
+            .execute()
+        )
+        values = result.get("values", [])
+        if not values:
+            raise Exception('Какая то фигня')
+        return pd.DataFrame(values[1:], columns=values[0])
+
+    @staticmethod
+    def get_list_selected_report(all_our_reports, type_of_report):
+        def parse_report_date(report_name):
+            try:
+                _, date_str = report_name.split('_')
+                return datetime.datetime.strptime(date_str, '%Y.%m.%d')
+            except ValueError:
+                raise Exception(f'Invalid date format in report name: {report_name}')
+
+        report_types = {
+            'stockReport': 'OurStock',
+            'priceReport': 'OurPrice',
+            'collectionsReport': 'OurCollections',
+            'mappingReport': 'OurMappingFile'
+        }
+        flag_type = report_types.get(type_of_report)
+        if not flag_type:
+            raise Exception('Unrecognized type report')
+
+        selected_reports = [
+            {
+                'id': report['id'],
+                'date_type': parse_report_date(report['name']),
+                'name_report': report['name']
+            }
+            for report in all_our_reports if report['name'].startswith(flag_type)
+        ]
+        selected_reports.sort(key=lambda x: x['date_type'])
+        return selected_reports
+
+    def select_our_report(self, source, sample_range_name=None, report_date=None):
+        if isinstance(report_date, str):
+            report_date = datetime.datetime.strptime(report_date, '%Y-%m-%d')
+        selected_reports = self.get_list_selected_report(self.get_list_our_report(), type_of_report=source)
+        date_selected_reports = [report['date_type'] for report in selected_reports]
+        if (report_date not in date_selected_reports) and (report_date is not None):
+            raise Exception(f'Отчета {source} с датой {report_date} не существует.\n'
+                            f'Возможные даты отчета {date_selected_reports}')
+        if report_date is None:
+            id_report_to_download = selected_reports[-1]['id']
+            return self.download_report(id_report_to_download, sample_range_name)
+        else:
+            for report in selected_reports:
+                if report['date_type'] == report_date:
+                    id_report_to_download = report['id']
+                    return self.download_report(id_report_to_download, sample_range_name)
 
 
-class InitialDataLoader(InitialWBDataLoader, InitialOZONDataLoader, InitialOurDataLoader):
-    def __init__(self, wb_statistic_and_price_token=None, wb_seller_analytics_token=None):
-        super().__init__(wb_statistic_and_price_token, wb_seller_analytics_token)
-        self.wb_statistic_and_price_token = wb_statistic_and_price_token
-        self.wb_seller_analytics_token = wb_seller_analytics_token
+class InitialDataLoader:
+    def __init__(self, wb_statistic_and_price_token=None, wb_seller_analytics_token=None,
+                 configurator_downloading_our_reports=None, ozon_token=None):
+        self.ourDataLoader = InitialOurDataLoader(configurator_downloading_our_reports)
+        self.wbDataLoader = InitialWBDataLoader(wb_statistic_and_price_token, wb_seller_analytics_token)
+        self.ozonDataLoader = InitialOZONDataLoader(ozon_token)
 
     def select_data_source(self, data_provider, **kwargs):
         if data_provider == 'wb':
-            return self.select_wb_report(**kwargs)
+            return self.wbDataLoader.select_wb_report(**kwargs)
         elif data_provider == 'ozon':
-            return self.select_ozon_report()
+            return self.ozonDataLoader.select_ozon_report()
         elif data_provider == 'our_report':
-            return self.select_our_report()
+            return self.ourDataLoader.select_our_report(**kwargs)
         else:
             raise ValueError(f"Unsupported data source: {data_provider}")
 
@@ -378,11 +496,19 @@ class InitialDataLoader(InitialWBDataLoader, InitialOZONDataLoader, InitialOurDa
 with open(r"C:\Users\vyacheslav\Desktop\Работа\apiKeys\api_keys.txt", 'r') as f:
     key = f.read()
 
-t = json.loads(key)['wb_key']
-
-loader = InitialDataLoader(wb_statistic_and_price_token=t)
-
-data = loader.select_data_source('wb', source='paidStorage', date_from='2023-12-10', date_to='2023-12-11')
-data.to_excel('data.xlsx', index=False)
+# t = json.loads(key)['wb_key']
+#
+# loader = InitialDataLoader(wb_statistic_and_price_token=t)
+#
+# data = loader.select_data_source('wb', source='paidStorage', date_from='2023-11-27', date_to='2023-11-03')
+# data.to_excel('data.xlsx', index=False)
 # data = data.T
-# data.to_excel('Хранение.xlsx', index=False)
+# data.to_excel('Хранение 27-03 ноября.xlsx', index=False)
+loader = InitialDataLoader(configurator_downloading_our_reports='configuratorDownloadOurReports.json')
+data = loader.select_data_source('our_report', source='mappingReport')
+# data = loader.authenticate_in_google_services()
+print(data)
+
+# loader = InitialOurDataLoader(configurator_downloading_our_reports='configuratorDownloadOurReports.json')
+# data = loader.get_list_our_report()
+# print(data)
